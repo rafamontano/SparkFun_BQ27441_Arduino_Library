@@ -47,6 +47,24 @@ bool BQ27441::begin(void)
 	return false; // Otherwise return false
 }
 
+// Perform soft-reset to the BQ27441.
+bool BQ27441::softResetCmd(void)
+{
+
+	if (softReset())
+	{
+		int16_t timeout = BQ72441_I2C_TIMEOUT;
+		while ((timeout--) && ((flags() & BQ27441_FLAG_CFGUPMODE)))
+			delay(1);
+		if (timeout > 0)
+		{
+			if (_sealFlag) seal(); // Seal back up if we IC was sealed coming in
+			return true;
+		}
+	}
+	return false;
+}
+
 // Test function to read an entire data memory block (32 bytes)
 bool BQ27441::readDataMemoryblock(uint8_t classID, uint8_t *buffer)
 {
@@ -96,6 +114,12 @@ bool BQ27441::setCapacity(uint16_t capacity)
 	uint8_t capLSB = capacity & 0x00FF;
 	uint8_t capacityData[2] = {capMSB, capLSB};
 	return writeExtendedData(BQ27441_ID_STATE, 10, capacityData, 2);
+}
+
+// Read the design energy of the connected battery.
+int16_t BQ27441::readDesignEnergy(void)
+{
+	return readExtendedDataInt16(BQ27441_ID_STATE, 12);
 }
 
 // Configures the design energy of the connected battery.
@@ -426,6 +450,22 @@ bool BQ27441::dsgFlag(void)
 	return flagState & BQ27441_FLAG_DSG;
 }
 
+// Check if the under-temperature flag is set
+bool BQ27441::utFlag(void)
+{
+	uint16_t flagState = flags();
+	
+	return flagState & BQ27441_FLAG_UT;
+}
+
+// Check if the Over-temperature flag is set
+bool BQ27441::otFlag(void)
+{
+	uint16_t flagState = flags();
+	
+	return flagState & BQ27441_FLAG_OT;
+}
+
 // Get the SOC_INT interval delta
 uint8_t BQ27441::sociDelta(void)
 {
@@ -696,12 +736,41 @@ uint8_t BQ27441::readExtendedData(uint8_t classID, uint8_t offset)
 	
 	blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
 	
-	computeBlockChecksum(); // Compute checksum going in
-	uint8_t oldCsum = blockDataChecksum();
+	//computeBlockChecksum(); // Compute checksum going in
+	//uint8_t oldCsum = blockDataChecksum();
+
+	delay(10);
 	/*for (int i=0; i<32; i++)
 		Serial.print(String(readBlockData(i)) + " ");*/
 	retData = readBlockData(offset % 32); // Read from offset (limit to 0-31)
 	
+	if (!_userConfigControl) exitConfig();
+	
+	return retData;
+}
+
+// Read a unsigned int from extended data specifying a class ID and position offset
+int16_t BQ27441::readExtendedDataInt16(uint8_t classID, uint8_t offset)
+{
+	int16_t retData = 0;
+	uint8_t data[2];
+	if (!_userConfigControl) enterConfig(false);
+		
+	if (!blockDataControl()) // // enable block data memory control
+		return false; // Return false if enable fails
+	if (!blockDataClass(classID)) // Write class ID using DataBlockClass()
+		return false;
+	
+	blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
+	
+	//computeBlockChecksum(); // Compute checksum going in
+	//uint8_t oldCsum = blockDataChecksum();
+
+	delay(10);
+
+	i2cReadBytes((offset % 32) + BQ27441_EXTENDED_BLOCKDATA, data, 2);
+	retData = ((int16_t) data[0] << 8) | data[1];
+
 	if (!_userConfigControl) exitConfig();
 	
 	return retData;

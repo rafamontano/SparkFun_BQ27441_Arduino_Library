@@ -13,8 +13,12 @@ lipo	KEYWORD1
 ###############################################################
 
 begin	KEYWORD2
+softResetCmd KEYWORD2
+utFlag KEYWORD2
+otFlag KEYWORD2
 readDataMemoryblock KEYWORD2
 setDataMemoryAccess KEYWORD2
+readDesignEnergy KEYWORD2
 setCapacity	KEYWORD2
 voltage	KEYWORD2
 current	KEYWORD2

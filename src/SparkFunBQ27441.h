@@ -26,6 +26,8 @@ Arduino Uno (any 'duino should do)
 
 #define BQ72441_I2C_TIMEOUT 2000
 
+#define BQ27XXX_DM_SZ 32
+
 // Parameters for the current() function, to specify which current to read
 typedef enum {
 	AVG,  // Average Current (DEFAULT)
@@ -88,6 +90,11 @@ public:
 	*/
 	bool begin(void);
 
+	/* 
+		Perform soft-reset to the BQ27441.
+	*/
+	bool softResetCmd(void);
+
 	/**
 	    Read the data memory access.
 		
@@ -97,7 +104,7 @@ public:
 	*/
 
 
-	bool BQ27441::readDataMemoryblock(uint8_t classID, uint8_t *buffer);
+	bool readDataMemoryblock(uint8_t classID, uint8_t *buffer);
 
 	/**
 	    Writes the data memory access.
@@ -108,7 +115,7 @@ public:
 		@return true on success otherwise false.
 	*/
 
-	bool BQ27441::setDataMemoryAccess(uint8_t classID, uint8_t * data, uint8_t len);
+	bool setDataMemoryAccess(uint8_t classID, uint8_t * data, uint8_t len);
 	
 	/**
 	    Configures the design capacity of the connected battery.
@@ -117,6 +124,14 @@ public:
 		@return true if capacity successfully set.
 	*/
 	bool setCapacity(uint16_t capacity);
+
+	/**
+	    Read the design energy capacity of the connected battery.
+		
+		@return int16_t with the design energy in mWh.
+	*/
+
+	int16_t readDesignEnergy(void);
 	
 	/**
 	    Configures the design energy of the connected battery.
@@ -320,6 +335,15 @@ public:
 	*/
 	bool dsgFlag(void);
 
+	/**
+	    Get the under temperature flag
+	*/
+	bool utFlag(void);
+
+	/**
+	    Get the over temperature flag
+	*/
+	bool otFlag(void);
 
 	/**
 	    Get the SOC_INT interval delta
@@ -533,6 +557,15 @@ private:
 		@return 8-bit value of specified data
 	*/
 	uint8_t readExtendedData(uint8_t classID, uint8_t offset);
+
+	/**
+	    Read a two bytes from extended data specifying a class ID and position offset
+		
+		@param classID is the id of the class to be read from
+		       offset is the byte position of the byte to be read
+		@return 16-bit value of specified data
+	*/
+	int16_t readExtendedDataInt16(uint8_t classID, uint8_t offset);
 	
 	/**
 	    Write a specified number of bytes to extended data specifying a 
