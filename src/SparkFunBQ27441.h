@@ -87,6 +87,28 @@ public:
 		@return true if communication was successful.
 	*/
 	bool begin(void);
+
+	/**
+	    Read the data memory access.
+		
+		@param Subclass id
+		@param data
+		@return true on success otherwise false.
+	*/
+
+
+	bool BQ27441::readDataMemoryblock(uint8_t classID, uint8_t *buffer);
+
+	/**
+	    Writes the data memory access.
+		
+		@param Subclass id
+		@param data
+		@param len
+		@return true on success otherwise false.
+	*/
+
+	bool BQ27441::setDataMemoryAccess(uint8_t classID, uint8_t * data, uint8_t len);
 	
 	/**
 	    Configures the design capacity of the connected battery.
@@ -203,6 +225,14 @@ public:
 		@return true on success
 	*/
 	bool setGPOUTFunction(gpout_function function);
+
+	/**
+	    Set SOC_Set Thresholds - threshold to set the alert flag
+		
+		@return tru on success
+	*/
+	bool setSOCSOFThresholds(uint8_t setSoC, uint8_t clearSoC,
+							uint8_t setSoF, uint8_t clearSoF);
 	
 	/**
 	    Get SOC1_Set Threshold - threshold to set the alert flag
@@ -515,6 +545,19 @@ private:
 		@return true on success
 	*/
 	bool writeExtendedData(uint8_t classID, uint8_t offset, uint8_t * data, uint8_t len);
+
+	/**
+	    Write a specified number of bytes to extended data specifying a 
+		class ID, position offset.
+		
+		@param classID is the id of the class to be read from
+		       offset is the byte position of the byte to be read
+			   data is the data buffer to be written
+			   len is the number of bytes to be written
+		@return true on success
+	*/
+
+	bool writeExtendedDataAsBlock(uint8_t classID, uint8_t offset, uint8_t * data, uint8_t len);
 	
 	/////////////////////////////////
 	// I2C Read and Write Routines //

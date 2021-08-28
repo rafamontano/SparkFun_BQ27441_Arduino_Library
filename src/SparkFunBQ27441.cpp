@@ -47,6 +47,44 @@ bool BQ27441::begin(void)
 	return false; // Otherwise return false
 }
 
+// Test function to read an entire data memory block (32 bytes)
+bool BQ27441::readDataMemoryblock(uint8_t classID, uint8_t *buffer)
+{
+
+	uint8_t data = 0;
+
+	if (!_userConfigControl) enterConfig(false);
+
+	if (!blockDataControl()) // // enable block data memory control
+		return false; // Return false if enable fails
+
+	if (!blockDataClass(classID)) // Write class ID using DataBlockClass()
+		return false;
+
+	blockDataOffset(0 / BQ27XXX_DM_SZ); // Write 32-bit block offset (usually 0)
+
+	delay(10);
+
+	i2cReadBytes(BQ27441_EXTENDED_BLOCKDATA + (0 % BQ27XXX_DM_SZ), buffer, BQ27XXX_DM_SZ);
+
+	for (int i=0; i<BQ27XXX_DM_SZ; i++) {
+		SerialUSB.print(buffer[i], HEX);
+		SerialUSB.print(" ");
+	}
+
+	readBlockData(0 % BQ27XXX_DM_SZ); // Read from offset (limit to 0-31)
+
+	if (!_userConfigControl) exitConfig();
+	
+	return true;
+}
+
+// Writes an entire data into the cassID with a len
+bool BQ27441::setDataMemoryAccess(uint8_t classID, uint8_t * data, uint8_t len)
+{
+	return writeExtendedDataAsBlock(classID, 0, data, len);
+}
+
 // Configures the design capacity of the connected battery.
 bool BQ27441::setCapacity(uint16_t capacity)
 {
@@ -281,6 +319,20 @@ bool BQ27441::setGPOUTFunction(gpout_function function)
 
 	// Write new opConfig
 	return writeOpConfig(newOpConfig);	
+}
+
+// Set the SOC set and clear thresholds to a percentage
+bool BQ27441::setSOCSOFThresholds(uint8_t setSoC, uint8_t clearSoC,
+								uint8_t setSoF, uint8_t clearSoF)
+{
+	uint8_t thresholds[4];
+	thresholds[0] = constrain(setSoC, 0, 100);
+	thresholds[1] = constrain(clearSoC, 0, 100);
+	thresholds[2] = constrain(setSoF, 0, 100);
+	thresholds[3] = constrain(clearSoF, 0, 100);
+
+	return writeExtendedDataAsBlock(BQ27441_ID_DISCHARGE, 0, thresholds, 4);
+	//return writeExtendedData(BQ27441_ID_DISCHARGE, 0, thresholds, 4);
 }
 
 // Get SOC1_Set Threshold - threshold to set the alert flag
@@ -681,6 +733,48 @@ bool BQ27441::writeExtendedData(uint8_t classID, uint8_t offset, uint8_t * data,
 		writeBlockData((offset % 32) + i, data[i]);
 	}
 	
+	// Write new checksum using BlockDataChecksum (0x60)
+	uint8_t newCsum = computeBlockChecksum(); // Compute the new checksum
+	writeBlockChecksum(newCsum);
+
+	if (!_userConfigControl) exitConfig();
+	
+	return true;
+}
+
+// Write a specified number of bytes to extended data specifying a 
+// class ID, position offset.
+bool BQ27441::writeExtendedDataAsBlock(uint8_t classID, uint8_t offset, uint8_t * data, uint8_t len)
+{
+	uint8_t buf[33];
+
+	if (len > 32)
+		return false;
+	
+	if (!_userConfigControl) enterConfig(false);
+
+	if (!blockDataControl()) // // enable block data memory control
+		return false; // Return false if enable fails*/
+	if (!blockDataClass(classID)) // Write class ID using DataBlockClass()
+		return false;
+	
+	blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
+	computeBlockChecksum(); // Compute checksum going in
+	uint8_t oldCsum = blockDataChecksum();
+
+	delay(10);
+
+	Wire.beginTransmission(_deviceAddress);
+
+	buf[0] = BQ27441_EXTENDED_BLOCKDATA;
+
+	memcpy(&buf[1], data, len);
+
+	// Include BQ27441_EXTENDED_BLOCKDATA to the lenght
+	Wire.write(buf, len + 1);
+	
+	Wire.endTransmission(true);
+
 	// Write new checksum using BlockDataChecksum (0x60)
 	uint8_t newCsum = computeBlockChecksum(); // Compute the new checksum
 	writeBlockChecksum(newCsum);
