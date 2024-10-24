@@ -167,6 +167,27 @@ bool BQ27441::setTaperRate(uint16_t rate)
 	return writeExtendedData(BQ27441_ID_STATE, 27, trData, 2);
 }
 
+// Read the design energy of the connected battery.
+int16_t BQ27441::readDesignVoltage(void)
+{
+	return readExtendedDataInt16(BQ27441_ID_CONFIG_DATA, 0);
+}
+
+// Configures design voltage of connected battery.
+bool BQ27441::setDesignVoltage(uint16_t design_voltage)
+{
+	// Write to STATE subclass (48) of BQ27441 extended memory.
+	// Offset 0x00 (0)
+	// Design Voltage is a 2-byte piece of data - MSB first
+	// Unit: mV
+	// Max 3800
+	if(design_voltage>3800) design_voltage=3800;
+	uint8_t dvMSB = design_voltage >> 8;
+	uint8_t dvLSB = design_voltage & 0x00FF;
+	uint8_t dvData[2] = {dvMSB, dvLSB};
+	return writeExtendedData(BQ27441_ID_CONFIG_DATA, 0, dvData, 2);
+}
+
 /*****************************************************************************
  ********************** Battery Characteristics Functions ********************
  *****************************************************************************/

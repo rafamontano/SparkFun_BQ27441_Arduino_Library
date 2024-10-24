@@ -151,6 +151,11 @@ public:
 
 	bool setTaperRate(uint16_t rate);
 
+	// Read the design voltage of the connected battery.
+	int16_t readDesignVoltage(void);
+
+	bool setDesignVoltage(uint16_t design_voltage);
+
 	/////////////////////////////
 	// Battery Characteristics //
 	/////////////////////////////
