@@ -246,6 +246,11 @@ public:
 	*/
 	bool setGPOUTFunction(gpout_function function);
 
+	// Host-Reported Temperature Functions
+    bool enableHostTemperatureReporting();
+	bool disableHostTemperatureReporting();
+    bool setHostTemperature(int16_t temperatureCx10); // temperature in 0.1C units
+
 	/**
 	    Set SOC_Set Thresholds - threshold to set the alert flag
 		

@@ -366,6 +366,52 @@ bool BQ27441::setGPOUTFunction(gpout_function function)
 	return writeOpConfig(newOpConfig);	
 }
 
+// Host-Reported Temperature Functions
+///////////////////////////////////////////////////
+
+// Enable host-reported temperature by setting TEMP_EN bit in OpConfigB
+// Returns true on success, false on failure
+bool BQ27441::enableHostTemperatureReporting()
+{
+	uint16_t oldOpConfig = opConfig();
+	
+	uint16_t newOpConfig = oldOpConfig;
+	newOpConfig |= BQ27441_OPCONFIG_TEMPS;
+	
+	return writeOpConfig(newOpConfig);	
+}
+
+// Host-Reported Temperature Functions
+///////////////////////////////////////////////////
+
+// Disable host-reported temperature by setting TEMP_EN bit in OpConfigB
+// Returns true on success, false on failure
+bool BQ27441::disableHostTemperatureReporting()
+{
+	uint16_t oldOpConfig = opConfig();
+	
+	uint16_t newOpConfig = oldOpConfig;
+	newOpConfig &= ~(BQ27441_OPCONFIG_TEMPS);
+	
+	return writeOpConfig(newOpConfig);	
+}
+
+// Set the host-reported temperature to the gauge
+// temperatureCx10: Temperature in 0.1 degrees Celsius (e.g., 251 for 25.1C)
+// Returns true on success, false on failure
+bool BQ27441::setHostTemperature(int16_t temperatureCx10)
+{
+	// The Temperature() command (0x02/0x03) is used for both reading and writing
+	// host-reported temperature once TEMP_EN is enabled.
+	uint8_t subCommandMSB = (temperatureCx10 >> 8);
+	uint8_t subCommandLSB = (temperatureCx10 & 0x00FF);
+	uint8_t command[2] = {subCommandLSB, subCommandMSB};
+	
+	if (i2cWriteBytes((uint8_t) BQ27441_COMMAND_TEMP, command, 2))
+		return true;
+
+}
+
 // Set the SOC set and clear thresholds to a percentage
 bool BQ27441::setSOCSOFThresholds(uint8_t setSoC, uint8_t clearSoC,
 								uint8_t setSoF, uint8_t clearSoF)
