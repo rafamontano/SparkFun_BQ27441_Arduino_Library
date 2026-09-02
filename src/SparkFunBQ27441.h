@@ -249,7 +249,29 @@ public:
 	// Host-Reported Temperature Functions
     bool enableHostTemperatureReporting();
 	bool disableHostTemperatureReporting();
-    bool setHostTemperature(int16_t temperatureCx10); // temperature in 0.1C units
+    bool setHostTemperature(int16_t temperatureKx10); // temperature in 0.1 KELVIN units
+
+	/**
+	    Read the OpConfig register (subclass 64, offset 0).
+
+		Exposes the private opConfig() so a sketch can tell what Temperature()
+		actually reports: [TEMPS] selects the internal sensor versus a
+		host-written value, and it persists in NVM across a reflash.
+
+		@return opConfig register contents
+	*/
+	uint16_t readOpConfig(void);
+
+	/**
+	    Whether the most recent I2C transaction completed successfully.
+
+		Every getter returns a plain value with no error channel, so a NACKed
+		read is indistinguishable from data. Check this after a read whose
+		correctness matters - Flags() reading 0xFFFF sets both [OT] and [UT].
+
+		@return true if the last read or write was acknowledged
+	*/
+	bool commOk(void);
 
 	/**
 	    Set SOC_Set Thresholds - threshold to set the alert flag
@@ -425,6 +447,7 @@ private:
 	bool _sealFlag; // Global to identify that IC was previously sealed
 	bool _userConfigControl; // Global to identify that user has control over 
 	                         // entering/exiting config
+	bool _lastCommOk; // Whether the last I2C transaction was acknowledged
 	
 	/**
 	    Check if the BQ27441-G1A is sealed or not.

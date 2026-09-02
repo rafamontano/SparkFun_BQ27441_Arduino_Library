@@ -26,7 +26,7 @@ Arduino Uno (any 'duino should do)
  ************************** Initialization Functions *************************
  *****************************************************************************/
 // Initializes class variables
-BQ27441::BQ27441() : _deviceAddress(BQ72441_I2C_ADDRESS), _sealFlag(false), _userConfigControl(false)
+BQ27441::BQ27441() : _deviceAddress(BQ72441_I2C_ADDRESS), _sealFlag(false), _userConfigControl(false), _lastCommOk(false)
 {
 }
 
@@ -84,11 +84,6 @@ bool BQ27441::readDataMemoryblock(uint8_t classID, uint8_t *buffer)
 	delay(10);
 
 	i2cReadBytes(BQ27441_EXTENDED_BLOCKDATA + (0 % BQ27XXX_DM_SZ), buffer, BQ27XXX_DM_SZ);
-
-	for (int i=0; i<BQ27XXX_DM_SZ; i++) {
-		SerialUSB.print(buffer[i], HEX);
-		SerialUSB.print(" ");
-	}
 
 	readBlockData(0 % BQ27XXX_DM_SZ); // Read from offset (limit to 0-31)
 
@@ -396,20 +391,20 @@ bool BQ27441::disableHostTemperatureReporting()
 	return writeOpConfig(newOpConfig);	
 }
 
-// Set the host-reported temperature to the gauge
-// temperatureCx10: Temperature in 0.1 degrees Celsius (e.g., 251 for 25.1C)
-// Returns true on success, false on failure
-bool BQ27441::setHostTemperature(int16_t temperatureCx10)
+// Set the host-reported temperature to the gauge.
+// temperatureKx10: temperature in 0.1 Kelvin, e.g. 2966 for 23.45 C.
+// Temperature() (0x02/0x03) is a 0.1 K register per the TRM (SLUUAC9A 4.2); the
+// previous parameter name and comment said 0.1 C, which they never were.
+// Returns true on success, false on failure.
+bool BQ27441::setHostTemperature(int16_t temperatureKx10)
 {
 	// The Temperature() command (0x02/0x03) is used for both reading and writing
-	// host-reported temperature once TEMP_EN is enabled.
-	uint8_t subCommandMSB = (temperatureCx10 >> 8);
-	uint8_t subCommandLSB = (temperatureCx10 & 0x00FF);
+	// host-reported temperature once OpConfig [TEMPS] is set.
+	uint8_t subCommandMSB = (temperatureKx10 >> 8);
+	uint8_t subCommandLSB = (temperatureKx10 & 0x00FF);
 	uint8_t command[2] = {subCommandLSB, subCommandMSB};
 	
-	if (i2cWriteBytes((uint8_t) BQ27441_COMMAND_TEMP, command, 2))
-		return true;
-
+	return i2cWriteBytes((uint8_t) BQ27441_COMMAND_TEMP, command, 2);
 }
 
 // Set the SOC set and clear thresholds to a percentage
@@ -924,35 +919,66 @@ bool BQ27441::writeExtendedDataAsBlock(uint8_t classID, uint8_t offset, uint8_t 
  ************************ I2C Read and Write Routines ************************
  *****************************************************************************/
 
+// Read the OpConfig register. opConfig() itself is private; this exposes it so a
+// sketch can tell what Temperature() actually is - [TEMPS] selects between the
+// internal sensor and a host-written value, and the bit persists in NVM across
+// a reflash.
+uint16_t BQ27441::readOpConfig(void)
+{
+	return opConfig();
+}
+
+// Whether the most recent I2C transaction completed. False means the value just
+// returned by any getter is not a reading.
+bool BQ27441::commOk(void)
+{
+	return _lastCommOk;
+}
+
 // Read a specified number of bytes over I2C at a given subAddress
 int16_t BQ27441::i2cReadBytes(uint8_t subAddress, uint8_t * dest, uint8_t count)
 {
-	int16_t timeout = BQ72441_I2C_TIMEOUT;	
+	// A NACKed read used to fall through to Wire.read() returning -1, which
+	// lands in dest[] as 0xFF. readWord() then returned 0xFFFF and every caller
+	// treated it as data - Flags() reading 0xFFFF sets both [OT] and [UT], and
+	// temperature() reports 6553.5 K. Report the failure instead.
+	_lastCommOk = false;
+
 	Wire.beginTransmission(_deviceAddress);
 	Wire.write(subAddress);
-	Wire.endTransmission(true);
-	
-	Wire.requestFrom(_deviceAddress, count);
-	
+	if (Wire.endTransmission(true) != 0)
+		return 0; // 1 = data too long, 2 = address NACK, 3 = data NACK, 4 = other
+
+	if (Wire.requestFrom(_deviceAddress, count) != count)
+		return 0; // device did not supply the requested bytes
+
 	for (int i=0; i<count; i++)
 	{
-		dest[i] = Wire.read();
+		int b = Wire.read();
+		if (b < 0)
+			return 0; // buffer drained early; do not fabricate 0xFF
+		dest[i] = (uint8_t) b;
 	}
-	
-	return timeout;
+
+	_lastCommOk = true;
+	return BQ72441_I2C_TIMEOUT;
 }
 
 // Write a specified number of bytes over I2C to a given subAddress
 uint16_t BQ27441::i2cWriteBytes(uint8_t subAddress, uint8_t * src, uint8_t count)
 {
+	_lastCommOk = false;
+
 	Wire.beginTransmission(_deviceAddress);
 	Wire.write(subAddress);
 	for (int i=0; i<count; i++)
 	{
 		Wire.write(src[i]);
 	}	
-	Wire.endTransmission(true);
-	
+	if (Wire.endTransmission(true) != 0)
+		return false;
+
+	_lastCommOk = true;
 	return true;	
 }
 
