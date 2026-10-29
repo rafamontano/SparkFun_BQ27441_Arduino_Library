@@ -65,31 +65,54 @@ bool BQ27441::softResetCmd(void)
 	return false;
 }
 
-// Test function to read an entire data memory block (32 bytes)
+// Read an entire data memory block (32 bytes, DataBlock 0 of the subclass).
+// Returns false if any part of the exchange was not acknowledged; buffer is
+// then not a reading.
 bool BQ27441::readDataMemoryblock(uint8_t classID, uint8_t *buffer)
 {
+	bool wasSealed = beginDataMemoryRead();
+	bool ok = false;
 
-	uint8_t data = 0;
+	if (blockDataControl() && blockDataClass(classID) && blockDataOffset(0))
+	{
+		delay(10);
+		ok = (i2cReadBytes(BQ27441_EXTENDED_BLOCKDATA, buffer, BQ27XXX_DM_SZ) != 0);
+	}
 
-	if (!_userConfigControl) enterConfig(false);
+	endDataMemoryRead(wasSealed);
 
-	if (!blockDataControl()) // // enable block data memory control
-		return false; // Return false if enable fails
+	return ok;
+}
 
-	if (!blockDataClass(classID)) // Write class ID using DataBlockClass()
+// Data memory reads need the gauge UNSEALED but not in CONFIG UPDATE mode
+// (TRM SLUUAC9A Table 5-1: DataClass()/BlockDataControl() are unavailable
+// SEALED; nothing requires CFGUPMODE for a read). The reads used to go through
+// enterConfig()/exitConfig(), which costs a SET_CFGUPDATE - gauging suspended -
+// and a SOFT_RESET with an OCV measurement taken under whatever load is
+// present, on every read of a threshold or design value.
+//
+// Returns true if the gauge was SEALED and has been unsealed here, so
+// endDataMemoryRead() can seal it again. When the sketch holds config mode
+// (_userConfigControl) the gauge is already unsealed and nothing is done.
+bool BQ27441::beginDataMemoryRead(void)
+{
+	if (_userConfigControl)
 		return false;
 
-	blockDataOffset(0 / BQ27XXX_DM_SZ); // Write 32-bit block offset (usually 0)
+	if (sealed())
+	{
+		unseal();
+		return true;
+	}
 
-	delay(10);
+	return false;
+}
 
-	i2cReadBytes(BQ27441_EXTENDED_BLOCKDATA + (0 % BQ27XXX_DM_SZ), buffer, BQ27XXX_DM_SZ);
-
-	readBlockData(0 % BQ27XXX_DM_SZ); // Read from offset (limit to 0-31)
-
-	if (!_userConfigControl) exitConfig();
-	
-	return true;
+// Counterpart of beginDataMemoryRead()
+void BQ27441::endDataMemoryRead(bool wasSealed)
+{
+	if (wasSealed)
+		seal();
 }
 
 // Writes an entire data into the cassID with a len
@@ -592,6 +615,8 @@ bool BQ27441::exitConfig(bool resim)
 	// measurement, and without resimulating to update unfiltered-SoC and SoC.
 	// If a new OCV measurement or resimulation is desired, SOFT_RESET or
 	// EXIT_RESIM should be used to exit config mode.
+	bool ok = false;
+
 	if (resim)
 	{
 		if (softReset())
@@ -599,18 +624,24 @@ bool BQ27441::exitConfig(bool resim)
 			int16_t timeout = BQ72441_I2C_TIMEOUT;
 			while ((timeout--) && ((flags() & BQ27441_FLAG_CFGUPMODE)))
 				delay(1);
-			if (timeout > 0)
-			{
-				if (_sealFlag) seal(); // Seal back up if we IC was sealed coming in
-				return true;
-			}
+			ok = (timeout > 0);
 		}
-		return false;
 	}
 	else
 	{
-		return executeControlWord(BQ27441_CONTROL_EXIT_CFGUPDATE);
-	}	
+		ok = executeControlWord(BQ27441_CONTROL_EXIT_CFGUPDATE);
+	}
+
+	if (ok && _sealFlag) seal(); // Seal back up if the IC was sealed coming in
+
+	// Config mode is over, whoever opened it. This flag used to stay set after
+	// the first enterConfig(true), so every later read or write skipped the
+	// enter/exit sequence for the rest of the sketch's life - the gauge's
+	// behaviour then depended on whether a config session had ever happened.
+	_userConfigControl = false;
+	_sealFlag = false;
+
+	return ok;
 }
 
 // Read the flags() command
@@ -675,11 +706,16 @@ bool BQ27441::softReset(void)
 	return executeControlWord(BQ27441_CONTROL_SOFT_RESET);
 }
 
-// Read a 16-bit command word from the BQ27441-G1A
+// Read a 16-bit command word from the BQ27441-G1A.
+// Returns 0xFFFF when the transaction fails; commOk() is false then. The
+// previous version returned whatever the two stack bytes happened to hold,
+// so a NACK produced a random reading rather than the sentinel the sketch
+// tests for.
 uint16_t BQ27441::readWord(uint16_t subAddress)
 {
 	uint8_t data[2];
-	i2cReadBytes(subAddress, data, 2);
+	if (!i2cReadBytes(subAddress, data, 2))
+		return 0xFFFF;
 	return ((uint16_t) data[1] << 8) | data[0];
 }
 
@@ -789,25 +825,16 @@ bool BQ27441::writeBlockChecksum(uint8_t csum)
 uint8_t BQ27441::readExtendedData(uint8_t classID, uint8_t offset)
 {
 	uint8_t retData = 0;
-	if (!_userConfigControl) enterConfig(false);
-		
-	if (!blockDataControl()) // // enable block data memory control
-		return false; // Return false if enable fails
-	if (!blockDataClass(classID)) // Write class ID using DataBlockClass()
-		return false;
-	
-	blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
-	
-	//computeBlockChecksum(); // Compute checksum going in
-	//uint8_t oldCsum = blockDataChecksum();
+	bool wasSealed = beginDataMemoryRead();
 
-	delay(10);
-	/*for (int i=0; i<32; i++)
-		Serial.print(String(readBlockData(i)) + " ");*/
-	retData = readBlockData(offset % 32); // Read from offset (limit to 0-31)
-	
-	if (!_userConfigControl) exitConfig();
-	
+	if (blockDataControl() && blockDataClass(classID) && blockDataOffset(offset / 32))
+	{
+		delay(10);
+		retData = readBlockData(offset % 32); // Read from offset (limit to 0-31)
+	}
+
+	endDataMemoryRead(wasSealed);
+
 	return retData;
 }
 
@@ -815,26 +842,18 @@ uint8_t BQ27441::readExtendedData(uint8_t classID, uint8_t offset)
 int16_t BQ27441::readExtendedDataInt16(uint8_t classID, uint8_t offset)
 {
 	int16_t retData = 0;
-	uint8_t data[2];
-	if (!_userConfigControl) enterConfig(false);
-		
-	if (!blockDataControl()) // // enable block data memory control
-		return false; // Return false if enable fails
-	if (!blockDataClass(classID)) // Write class ID using DataBlockClass()
-		return false;
-	
-	blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
-	
-	//computeBlockChecksum(); // Compute checksum going in
-	//uint8_t oldCsum = blockDataChecksum();
+	uint8_t data[2] = {0, 0};
+	bool wasSealed = beginDataMemoryRead();
 
-	delay(10);
+	if (blockDataControl() && blockDataClass(classID) && blockDataOffset(offset / 32))
+	{
+		delay(10);
+		if (i2cReadBytes((offset % 32) + BQ27441_EXTENDED_BLOCKDATA, data, 2))
+			retData = ((int16_t) data[0] << 8) | data[1];
+	}
 
-	i2cReadBytes((offset % 32) + BQ27441_EXTENDED_BLOCKDATA, data, 2);
-	retData = ((int16_t) data[0] << 8) | data[1];
+	endDataMemoryRead(wasSealed);
 
-	if (!_userConfigControl) exitConfig();
-	
 	return retData;
 }
 
@@ -842,35 +861,39 @@ int16_t BQ27441::readExtendedDataInt16(uint8_t classID, uint8_t offset)
 // class ID, position offset.
 bool BQ27441::writeExtendedData(uint8_t classID, uint8_t offset, uint8_t * data, uint8_t len)
 {
-	if (len > 32)
-		return false;
-	
-	if (!_userConfigControl) enterConfig(false);
-	
-	if (!blockDataControl()) // // enable block data memory control
-		return false; // Return false if enable fails
-	if (!blockDataClass(classID)) // Write class ID using DataBlockClass()
-		return false;
-	
-	blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
-	computeBlockChecksum(); // Compute checksum going in
-	uint8_t oldCsum = blockDataChecksum();
+	bool autoConfig = !_userConfigControl;
+	bool ok = false;
 
-	// Write data bytes:
-	for (int i = 0; i < len; i++)
+	if (len > 32 || (offset % 32) + len > 32)
+		return false;
+
+	if (autoConfig && !enterConfig(false))
+		return false;
+
+	if (blockDataControl() && blockDataClass(classID) && blockDataOffset(offset / 32))
 	{
-		// Write to offset, mod 32 if offset is greater than 32
-		// The blockDataOffset above sets the 32-bit block
-		writeBlockData((offset % 32) + i, data[i]);
-	}
-	
-	// Write new checksum using BlockDataChecksum (0x60)
-	uint8_t newCsum = computeBlockChecksum(); // Compute the new checksum
-	writeBlockChecksum(newCsum);
+		ok = true;
 
-	if (!_userConfigControl) exitConfig();
-	
-	return true;
+		// Write data bytes:
+		for (int i = 0; i < len && ok; i++)
+		{
+			// Write to offset, mod 32 if offset is greater than 32
+			// The blockDataOffset above sets the 32-bit block
+			ok = writeBlockData((offset % 32) + i, data[i]);
+		}
+
+		// The block is transferred to data memory only when the correct
+		// checksum, 255 - (sum of the 32 bytes & 0xFF), lands in 0x60
+		// (TRM SLUUAC9A 3.1 step 11). Every write used to be reported as
+		// true whether or not the bytes or the checksum were acknowledged.
+		if (ok)
+			ok = writeBlockChecksum(computeBlockChecksum());
+	}
+
+	if (autoConfig && !exitConfig())
+		ok = false;
+
+	return ok;
 }
 
 // Write a specified number of bytes to extended data specifying a 
@@ -878,41 +901,39 @@ bool BQ27441::writeExtendedData(uint8_t classID, uint8_t offset, uint8_t * data,
 bool BQ27441::writeExtendedDataAsBlock(uint8_t classID, uint8_t offset, uint8_t * data, uint8_t len)
 {
 	uint8_t buf[33];
+	bool autoConfig = !_userConfigControl;
+	bool ok = false;
 
-	if (len > 32)
+	if (len > 32 || (offset % 32) + len > 32)
 		return false;
-	
-	if (!_userConfigControl) enterConfig(false);
 
-	if (!blockDataControl()) // // enable block data memory control
-		return false; // Return false if enable fails*/
-	if (!blockDataClass(classID)) // Write class ID using DataBlockClass()
+	if (autoConfig && !enterConfig(false))
 		return false;
-	
-	blockDataOffset(offset / 32); // Write 32-bit block offset (usually 0)
-	computeBlockChecksum(); // Compute checksum going in
-	uint8_t oldCsum = blockDataChecksum();
 
-	delay(10);
+	if (blockDataControl() && blockDataClass(classID) && blockDataOffset(offset / 32))
+	{
+		delay(10);
 
-	Wire.beginTransmission(_deviceAddress);
+		Wire.beginTransmission(_deviceAddress);
 
-	buf[0] = BQ27441_EXTENDED_BLOCKDATA;
+		buf[0] = BQ27441_EXTENDED_BLOCKDATA + (offset % 32);
 
-	memcpy(&buf[1], data, len);
+		memcpy(&buf[1], data, len);
 
-	// Include BQ27441_EXTENDED_BLOCKDATA to the lenght
-	Wire.write(buf, len + 1);
-	
-	Wire.endTransmission(true);
+		// Include BQ27441_EXTENDED_BLOCKDATA to the lenght
+		Wire.write(buf, len + 1);
 
-	// Write new checksum using BlockDataChecksum (0x60)
-	uint8_t newCsum = computeBlockChecksum(); // Compute the new checksum
-	writeBlockChecksum(newCsum);
+		ok = (Wire.endTransmission(true) == 0);
 
-	if (!_userConfigControl) exitConfig();
-	
-	return true;
+		// See writeExtendedData(): the checksum write is what commits the block
+		if (ok)
+			ok = writeBlockChecksum(computeBlockChecksum());
+	}
+
+	if (autoConfig && !exitConfig())
+		ok = false;
+
+	return ok;
 }
 
 /*****************************************************************************

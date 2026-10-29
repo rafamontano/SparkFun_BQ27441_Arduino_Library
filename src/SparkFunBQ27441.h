@@ -455,7 +455,23 @@ private:
 		@return true if the chip is sealed
 	*/
 	bool sealed(void);
-	
+
+	/**
+	    beginDataMemoryRead() - Unseal the gauge, if needed, for a data memory
+	    read. Reads need UNSEALED only, not CONFIG UPDATE (TRM Table 5-1).
+
+	    @return true if the gauge was sealed and is now unsealed; pass it to
+	    endDataMemoryRead() to seal it again
+	*/
+	bool beginDataMemoryRead(void);
+
+	/**
+	    endDataMemoryRead() - Seal the gauge again after a data memory read.
+
+	    @param wasSealed the value beginDataMemoryRead() returned
+	*/
+	void endDataMemoryRead(bool wasSealed);
+
 	/**
 	    Seal the BQ27441-G1A
 		
